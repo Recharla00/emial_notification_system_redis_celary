@@ -1,0 +1,70 @@
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://notifications:localdev@postgres:5432/notifications
+    REDIS_URL: redis://redis:6379/0
+    SMTP_HOST: mailpit
+    SMTP_PORT: 1025
+    SMTP_SECURITY: none
+    SMTP_USERNAME: ""
+    SMTP_PASSWORD: ""
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    init:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: notifications
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: notifications
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U notifications"]
+      interval: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      retries: 10
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:8025:8025"
+  init:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://notifications:localdev@postgres:5432/notifications
+    command: python -m app.database
+    depends_on:
+      postgres:
+        condition: service_healthy
+  api:
+    <<: *app
+    ports:
+      - "127.0.0.1:8000:8000"
+  worker:
+    <<: *app
+    command: celery -A app.celery_app:celery worker --loglevel=info --concurrency=2
+  beat:
+    <<: *app
+    command: celery -A app.celery_app:celery beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+
+volumes:
+  postgres-data:
+  redis-data:

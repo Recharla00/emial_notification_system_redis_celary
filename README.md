@@ -1,5 +1,9 @@
 # Redis + Celery email notifications
 
+See [LOGGING.md](LOGGING.md) for tracing API, Beat, Redis publication, worker execution, and SMTP events.
+
+For logs, Redis queue inspection, and interactive worker breakpoints, follow [the debugging walkthrough](DEBUGGING.md).
+
 A FastAPI email service with SMTP delivery, Redis as Celery's broker, and PostgreSQL as a durable email outbox. SQLite is available for local development and tests.
 
 ## Run the complete local stack
@@ -54,7 +58,7 @@ The Swagger **Authorize** button accepts `X-API-Key`. Status timestamps are stor
 ## Delivery behavior
 
 1. The API validates the payload and commits it to the database before acknowledging it.
-2. Beat dispatches up to 100 due records every ten seconds. Future emails stay in the database rather than occupying long-running Redis ETA tasks.
+2. Beat dispatches up to 100 due records every 60 seconds. Future emails stay in the database rather than occupying long-running Redis ETA tasks.
 3. A worker atomically claims a record for five minutes. Concurrent duplicate jobs cannot claim an active email.
 4. SMTP acceptance marks the record `sent`. Temporary errors retry with exponential backoff and jitter; permanent SMTP 5xx errors fail immediately. The default limit is five attempts.
 5. Expired claims are recovered after worker interruption. Cancelled and completed records are ignored.

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     smtp_security: Literal["none", "starttls", "ssl"] = "none"
     smtp_from: EmailStr = "notifications@example.com"
     max_attempts: int = Field(default=5, ge=1, le=20)
+    app_log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
 
 @lru_cache

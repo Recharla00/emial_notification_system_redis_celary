@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import secrets
 from contextlib import asynccontextmanager
 from datetime import timezone
@@ -13,12 +14,18 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from app.config import get_settings
 from app.database import Notification, Session, init_db, utcnow
 from app.schemas import EmailRequest, EmailStatus
+from app.logging_setup import configure_logging
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app):
+    configure_logging()
     init_db()
+    logger.info("API_READY database_initialized=true")
     yield
+    logger.info("API_STOPPED")
 
 
 app = FastAPI(title="Email Notification Service", version="1.0.0", lifespan=lifespan)
@@ -27,6 +34,7 @@ api_key = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 def authenticate(key: str | None = Depends(api_key)):
     if not key or not secrets.compare_digest(key.encode(), get_settings().api_key.get_secret_value().encode()):
+        logger.warning("AUTH_REJECTED reason=invalid_api_key")
         raise HTTPException(401, "Invalid API key")
 
 
@@ -44,7 +52,8 @@ def ready():
             session.execute(text("SELECT 1"))
         with Redis.from_url(get_settings().redis_url, socket_connect_timeout=2, socket_timeout=2) as redis:
             redis.ping()
-    except (SQLAlchemyError, RedisError):
+    except (SQLAlchemyError, RedisError) as exc:
+        logger.warning("READINESS_FAILED error_type=%s", type(exc).__name__)
         raise HTTPException(503, "Database or broker unavailable") from None
     return {"status": "ready"}
 
@@ -61,13 +70,17 @@ def create_email(payload: EmailRequest, idempotency_key: Annotated[str, Header(m
         session.add(notification)
         try:
             session.commit()
+            logger.info("EMAIL_SAVED notification_id=%s status=%s due_at=%s",
+                        notification.id, notification.status, notification.next_attempt_at)
         except IntegrityError:
             session.rollback()
             notification = session.scalar(select(Notification).where(Notification.idempotency_key == idempotency_key))
             if notification is None:
                 raise
             if notification.payload_hash != digest:
+                logger.warning("IDEMPOTENCY_CONFLICT notification_id=%s", notification.id)
                 raise HTTPException(409, "Idempotency key already used with a different payload")
+            logger.info("IDEMPOTENCY_REUSED notification_id=%s", notification.id)
         return EmailStatus.model_validate(notification)
 
 
@@ -84,6 +97,7 @@ def get_email(notification_id: str):
         row = session.get(Notification, notification_id)
         if row is None:
             raise HTTPException(404, "Notification not found")
+        logger.debug("STATUS_READ notification_id=%s status=%s attempts=%s", row.id, row.status, row.attempts)
         return EmailStatus.model_validate(row)
 
 
@@ -97,4 +111,6 @@ def cancel_email(notification_id: str):
             if session.get(Notification, notification_id) is None:
                 raise HTTPException(404, "Notification not found")
             raise HTTPException(409, "Only pending or retrying notifications can be cancelled")
-        return EmailStatus.model_validate(session.get(Notification, notification_id))
+        response = EmailStatus.model_validate(session.get(Notification, notification_id))
+    logger.info("EMAIL_CANCELLED notification_id=%s", response.id)
+    return response

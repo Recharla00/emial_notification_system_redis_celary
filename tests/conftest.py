@@ -6,7 +6,7 @@ import pytest
 
 _temp = tempfile.TemporaryDirectory()
 os.environ["DATABASE_URL"] = "sqlite:///" + str(Path(_temp.name) / "test.db")
-os.environ["API_KEY"] = "prasadrecharladeekshitha"
+os.environ["API_KEY"] = "test-secret-key-at-least-24-characters"
 
 from app.database import Base, engine
 from app.main import app
